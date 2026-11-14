@@ -70,6 +70,33 @@ describe('routines read from a Hevy CSV', () => {
     expect(routines.map(r => r.name)).toEqual(['胸+三头'])
   })
 
+  it('does not chain two days trained side by side through a later look-alike', () => {
+    const tricky = csv([
+      ...chestDay('A日', '1 9月 2026'), ...chestDay('A日', '8 9月 2026'),
+      ...chestDay('B日', '2 9月 2026'), ...chestDay('B日', '9 9月 2026'),
+      ...chestDay('C日', '20 9月 2026'), ...chestDay('C日', '27 9月 2026'),
+    ])
+    // A日 and B日 ran side by side, so they are two plans. C日 comes later and looks like both:
+    // it may be a rename of one of them, never a bridge that folds the other in as well.
+    expect(parseImportFile(tricky, { unit: 'kg' }).routines.routines.map(r => r.name).sort()).toEqual(['B日', 'C日'])
+  })
+
+  it('gives a plan split by the rename gap its own importKey', () => {
+    const farApart = csv([
+      ...chestDay('胸 + 三头', '5 1月 2026'),
+      ...chestDay('胸 + 三头', '12 1月 2026'),
+      ...chestDay('胸+三头', '23 3月 2026'),
+      ...chestDay('胸+三头', '30 3月 2026'),
+    ])
+    const parsedFar = parseImportFile(farApart, { unit: 'kg' })
+    // 70 days apart: two plans, and their keys must not collide on the normalized title.
+    expect(parsedFar.routines.routines.map(r => r.name).sort()).toEqual(['胸 + 三头', '胸+三头'])
+    expect(new Set(parsedFar.routines.routines.map(r => r.importKey)).size).toBe(2)
+    const S = { workouts: [], customEx: [], exWeights: {}, bodyweight: [], routines: [] }
+    mergeImport(S, parsedFar)
+    expect(mergeImportedRoutines(S, parsedFar.routines)).toEqual({ added: 2, skipped: 0 })
+  })
+
   it('keeps two different days that were trained side by side separate', () => {
     const twoDays = csv([
       ...chestDay('A日', '1 9月 2026'),

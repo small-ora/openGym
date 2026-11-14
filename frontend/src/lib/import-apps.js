@@ -602,7 +602,6 @@ function parseJefit(text, opts) {
 // Only the exercise ids the history import already resolved are used, so a plan and its history
 // point at one exercise and nothing is created here that the history did not create.
 
-const zhKeyOf = s => String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')
 const RENAME_GAP_DAYS = 45      // a day renamed after two months away is a new plan, not a rename
 const RENAME_SAME = 0.6         // Jaccard of the old title's last session and the new one's first
 const RENAME_KNOWN = 0.8        // share of the new title's first session the old history already had
@@ -654,21 +653,27 @@ function renamedDayGroups(days) {
   const names = [...days.keys()].sort((a, b) => (days.get(a)[0].d < days.get(b)[0].d ? -1 : 1))
   const parent = new Map(names.map(n => [n, n]))
   const find = n => (parent.get(n) === n ? n : find(parent.get(n)))
+  // What each group already covers, so the rename rule stays a rename rule: the whole older group
+  // has to have ended before the newer one began. Without that, two days trained side by side
+  // could be chained through a third, later title that looks a bit like both of them.
+  const span = new Map(names.map(n => [n, {
+    first: days.get(n)[0], last: days.get(n)[days.get(n).length - 1], ids: new Set(days.get(n).flatMap(idsOf)),
+  }]))
   for (const older of names) {
-    const ws = days.get(older)
-    const last = ws[ws.length - 1]
     for (const newer of names) {
-      if (newer === older) continue
-      const nws = days.get(newer)
-      const gap = gapDays(last.d, nws[0].d)
-      // gap 0 means the two were in use at the same time: two different days, never a rename.
-      if (!gap || gap > RENAME_GAP_DAYS) continue
-      if (jaccardOf(idsOf(last), idsOf(nws[0])) < RENAME_SAME) continue
-      const known = new Set(ws.flatMap(idsOf))
-      const first = idsOf(nws[0])
-      if (sharedOf(known, first) / first.length < RENAME_KNOWN) continue
+      if (older === newer) continue
       const ra = find(older), rb = find(newer)
-      if (ra !== rb) parent.set(ra, rb)
+      if (ra === rb) continue
+      const A = span.get(ra), B = span.get(rb)
+      if (!(A.last.d < B.first.d)) continue
+      const gap = gapDays(A.last.d, B.first.d)
+      if (!gap || gap > RENAME_GAP_DAYS) continue
+      if (jaccardOf(idsOf(A.last), idsOf(B.first)) < RENAME_SAME) continue
+      const first = idsOf(B.first)
+      if (sharedOf(A.ids, first) / first.length < RENAME_KNOWN) continue
+      parent.set(ra, rb)
+      span.set(rb, { first: A.first, last: B.last, ids: new Set([...A.ids, ...B.ids]) })
+      span.delete(ra)
     }
   }
   const groups = new Map()
@@ -705,7 +710,7 @@ export function routinesFromHistory(parsed) {
     const session = mostTypicalSession(workouts)
     const ex = session.entries.map(slotOf).filter(Boolean)
     if (!ex.length) continue
-    routines.push({ importKey: 'hevycsv|' + zhKeyOf(name), name: name.slice(0, 80), emoji: 'figureStrength', ex, last: session.d })
+    routines.push({ importKey: 'hevycsv|' + name.trim(), name: name.slice(0, 80), emoji: 'figureStrength', ex, last: session.d })
   }
   // Newest plan first, the order the user would list their current split in.
   routines.sort((a, b) => (a.last < b.last ? 1 : -1))
