@@ -523,12 +523,12 @@ const monthOf = w => {
 // day-period word in front of a 12-hour time ("下午6:00"). Without these every row of such a
 // file failed the date gate and the import ended with "nothing to import".
 const ZH_PERIOD = Object.assign(Object.create(null), {
-  上午: 0, 凌晨: 0, 早上: 0, 中午: 12, 下午: 12, 晚上: 12,
+  上午: 0, 凌晨: 0, 早上: 0, 清晨: 0, 中午: 12, 下午: 12, 晚上: 12,
 })
 // The time part of the Chinese shapes: the comma the exporter may or may not write, the optional
 // day-period word, then h:mm. A time without a period word is read as written (the zh-CN export
 // writes a 24-hour clock), so only the word decides whether 12-hour conversion applies.
-const ZH_TIME = '(?:\\s*[,，]?\\s*(上午|凌晨|早上|中午|下午|晚上)?\\s*(\\d{1,2}):(\\d{2}))?'
+const ZH_TIME = '(?:\\s*[,，]?\\s*(上午|凌晨|早上|清晨|中午|下午|晚上)?\\s*(\\d{1,2}):(\\d{2}))?'
 
 /** "30 10月 2026, 09:52" · "2026年10月30日 09:52" · "2026年1月1日" -> { d, t }, or null */
 function chineseWhen(v) {

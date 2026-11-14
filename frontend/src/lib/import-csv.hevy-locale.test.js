@@ -23,7 +23,7 @@ describe('Chinese dates in a Hevy export', () => {
     expect(parseWhen('2026年1月1日')).toEqual({ d: '2026-01-01', t: null })
   })
 
-  // zh-TW writes a 12-hour clock with a day-period word in front: 上午/凌晨/早上 are the
+  // zh-TW writes a 12-hour clock with a day-period word in front: 上午/凌晨/早上/清晨 are the
   // morning, 中午/下午/晚上 the afternoon and evening. 12 is the edge on both sides.
   it('applies a Chinese day-period word to a 12-hour time', () => {
     expect(parseWhen('30 10月 2026, 下午6:00')).toEqual({ d: '2026-10-30', t: 18 * H })
@@ -33,6 +33,7 @@ describe('Chinese dates in a Hevy export', () => {
     expect(parseWhen('2026年10月30日 中午12:00')).toEqual({ d: '2026-10-30', t: 12 * H })
     expect(parseWhen('2026年10月30日 晚上8:15')).toEqual({ d: '2026-10-30', t: 20 * H + 15 * M })
     expect(parseWhen('2026年10月30日 凌晨1:10')).toEqual({ d: '2026-10-30', t: H + 10 * M })
+    expect(parseWhen('2026年10月30日 清晨9:00')).toEqual({ d: '2026-10-30', t: 9 * H })
   })
 
   it('still rejects impossible Chinese dates', () => {
