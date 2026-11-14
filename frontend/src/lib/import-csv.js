@@ -178,6 +178,10 @@ function wordsOf(name) {
   return k.split(' ').filter(w => w && !FILLER.has(w))
 }
 const keyOf = name => wordsOf(name).sort().join(' ')
+// A title the word bag cannot reduce — a Chinese name has no Latin words, so wordsOf drops all
+// of it — still has to be an identity of its own: the empty key made every such exercise in a
+// file the same one, so a history with forty Chinese titles came in as forty copies of the first.
+const importKeyOf = name => keyOf(name) || 'n:' + String(name || '').trim().toLowerCase()
 
 let INDEX = null
 function buildIndex() {
@@ -513,7 +517,42 @@ const monthOf = w => {
   return MON[k] || MON[k.slice(0, 4)] || MON[k.slice(0, 3)] || null
 }
 
-/** "2020-12-30 18:51:52" · "2024-03-07" · "2024/03/07" · "2024.03.07" · "22 Dec 2025, 08:00" · "21 août 2024, 18:00" · "07/03/2024" -> { d, t } */
+// Chinese writes the month as a number plus 月, so the month-word table above cannot read it.
+// Hevy localizes the CSV date to the app's language: a Chinese export writes
+// "30 10月 2026, 09:52" (day, month, year) or "2026年10月30日 09:52" (年月日), and zh-TW puts a
+// day-period word in front of a 12-hour time ("下午6:00"). Without these every row of such a
+// file failed the date gate and the import ended with "nothing to import".
+const ZH_PERIOD = Object.assign(Object.create(null), {
+  上午: 0, 凌晨: 0, 早上: 0, 中午: 12, 下午: 12, 晚上: 12,
+})
+// The time part of the Chinese shapes: the comma the exporter may or may not write, the optional
+// day-period word, then h:mm. A time without a period word is read as written (the zh-CN export
+// writes a 24-hour clock), so only the word decides whether 12-hour conversion applies.
+const ZH_TIME = '(?:\\s*[,，]?\\s*(上午|凌晨|早上|中午|下午|晚上)?\\s*(\\d{1,2}):(\\d{2}))?'
+
+/** "30 10月 2026, 09:52" · "2026年10月30日 09:52" · "2026年1月1日" -> { d, t }, or null */
+function chineseWhen(v) {
+  let m = v.match(new RegExp(`^(\\d{1,2})\\s+(\\d{1,2})\\s*月\\s*(\\d{4})${ZH_TIME}`))
+  let y, mo, d
+  if (m) [, d, mo, y] = m
+  else {
+    m = v.match(new RegExp(`^(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日${ZH_TIME}`))
+    if (!m) return null
+    ;[, y, mo, d] = m
+  }
+  const period = m[4]
+  let h = m[5]
+  if (period) {
+    // A period word belongs to a 12-hour clock: 1-12 only. 12 means 0 on the periods that
+    // start the day (上午12:30 is 00:30) and 12 on the ones that end it.
+    const n = +h
+    if (n < 1 || n > 12) return null
+    h = ZH_PERIOD[period] === 12 ? (n % 12) + 12 : n % 12
+  }
+  return calendarDay(y, mo, d, h, m[6])
+}
+
+/** "2020-12-30 18:51:52" · "2024-03-07" · "2024/03/07" · "2024.03.07" · "22 Dec 2025, 08:00" · "21 août 2024, 18:00" · "07/03/2024" · "30 10月 2026, 09:52" -> { d, t } */
 export function parseWhen(s) {
   const v = String(s || '').trim()
   let m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/)
@@ -534,7 +573,7 @@ export function parseWhen(s) {
     const mon = day === a ? b : a
     return calendarDay(y, mon, day, m[4], m[5])
   }
-  return null
+  return chineseWhen(v)
 }
 /** Whole calendar days from one "YYYY-MM-DD" to another (0 when either is unreadable). */
 export const daysBetween = (a, b) => {
@@ -683,7 +722,7 @@ export function parseWorkoutRows(rows, map, source, { unit = 'kg', customEx = []
       if (text) {
         const sk = sessionKeyOf(when, r)
         if (!rowNotes.has(sk)) rowNotes.set(sk, [])
-        rowNotes.get(sk).push([name.trim().toLowerCase(), keyOf(name), text])
+        rowNotes.get(sk).push([name.trim().toLowerCase(), importKeyOf(name), text])
       }
       continue
     }
@@ -723,7 +762,7 @@ export function parseWorkoutRows(rows, map, source, { unit = 'kg', customEx = []
     // of Object.prototype ("constructor" would find a function in every index).
     const rawId = own ? cell(r, 'exerciseId') : ''
     const fileId = /^[A-Za-z0-9][\w.-]{0,63}$/.test(rawId) && !(rawId in Object.prototype) ? rawId : ''
-    const key = fileId ? 'id:' + fileId : keyOf(name)
+    const key = fileId ? 'id:' + fileId : importKeyOf(name)
     // The match is cached per exact title, not per word bag: the bag drops "weighted", so
     // "Triceps Dip" and "Triceps Dip (Weighted)" would share one match, the first title's.
     const exact = fileId ? key : name.trim().toLowerCase()
