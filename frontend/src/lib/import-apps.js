@@ -16,6 +16,7 @@ import { parseCSV, parseImport, parseWorkoutRows, matchExercise, isNoMatch, impo
 import { EXIDX, canonicalExId } from './exercises.js'
 import { uid } from './format.js'
 import { LIFTOSAUR_EXERCISES } from './liftosaur-exercises.js'
+import { isWarmupRow } from './workout-model.js'
 
 const LB_TO_KG = 0.45359237
 const p2 = n => String(n).padStart(2, '0')
@@ -586,6 +587,137 @@ function parseJefit(text, opts) {
   return workouts(out, 'JEFIT', opts, skipped)
 }
 
+/* --------------------------------------------------- Hevy CSV → routines -- */
+// Hevy's CSV export is the workout history: one row per set, the workout's name on every row,
+// and nothing else that says "this is a plan". The plans are still readable from it — the titles
+// are the user's training days ("肩和腿", "胸+三头") and the exercises logged under a title are
+// what that day does. So every title the history repeats becomes one routine, built from its
+// most typical session (the exercise list logged most often; the latest of equals) with that
+// session's sets, reps and load.
+//
+// A renamed day is one plan, not two: Hevy names are free text, and a title that stopped the
+// week a near-identical one started is the same training day under its new name. Those merge,
+// and the plan keeps the newer title — what the user sees in Hevy today.
+//
+// Only the exercise ids the history import already resolved are used, so a plan and its history
+// point at one exercise and nothing is created here that the history did not create.
+
+const zhKeyOf = s => String(s || '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')
+const RENAME_GAP_DAYS = 45      // a day renamed after two months away is a new plan, not a rename
+const RENAME_SAME = 0.6         // Jaccard of the old title's last session and the new one's first
+const RENAME_KNOWN = 0.8        // share of the new title's first session the old history already had
+const ROUTINE_MIN_SESSIONS = 2  // a title logged once is a one-off, not a day of the plan
+const ROUTINE_MAX_SETS = 20
+
+const idsOf = w => w.entries.map(e => e.id)
+// Whole days between two "YYYY-MM-DD" days (import-csv's daysBetween only answers the next-day
+// question a workout's length needs). 0 when they are the same day or the later one is not after.
+const gapDays = (a, b) => {
+  const n = Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+const sharedOf = (a, b) => { const B = new Set(b); let n = 0; for (const x of a) if (B.has(x)) n++; return n }
+const jaccardOf = (a, b) => { const A = new Set(a), B = new Set(b); const i = sharedOf(A, B); const u = A.size + B.size - i; return u ? i / u : 0 }
+
+/** One entry of the file as a routine slot, in the mode the sets were logged in. */
+function slotOf(entry) {
+  const work = entry.sets.filter(s => !isWarmupRow(s))
+  const sets = work.length ? work : entry.sets
+  if (!sets.length) return null
+  const n = Math.min(ROUTINE_MAX_SETS, Math.max(1, sets.length))
+  const timed = sets.find(s => s.sec != null)
+  if (timed) return { id: entry.id, sets: n, mode: 'time', sec: Math.round(sets.reduce((a, s) => a + (s.sec || 0), 0) / sets.length), weight: roundWeight(Math.max(0, ...sets.map(s => s.w || 0))) }
+  const cardio = sets.find(s => s.min != null)
+  if (cardio) return { id: entry.id, sets: n, min: Math.max(...sets.map(s => s.min || 0)), speed: Math.round(sets.reduce((a, s) => a + (s.speed || 0), 0) / sets.length * 10) / 10 }
+  // The reps most sets were logged for (ties go to the higher count), and the heaviest set as
+  // the slot's load — the same "what I did last time" the app would pre-fill from history.
+  const counts = new Map()
+  for (const s of sets) counts.set(s.r || 0, (counts.get(s.r || 0) || 0) + 1)
+  const reps = [...counts].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0][0]
+  return { id: entry.id, sets: n, reps, weight: roundWeight(Math.max(0, ...sets.map(s => s.w || 0))) }
+}
+
+/** The session that best represents a training day: the exercise list logged most often. */
+function mostTypicalSession(workouts) {
+  const seen = new Map()
+  for (const w of workouts) {
+    const key = idsOf(w).join('|')
+    const cur = seen.get(key)
+    if (cur) { cur.n++; if (w.d >= cur.w.d) cur.w = w }
+    else seen.set(key, { n: 1, w })
+  }
+  return [...seen.values()].sort((a, b) => b.n - a.n || (a.w.d < b.w.d ? 1 : -1))[0].w
+}
+
+/** Titles that are one training day under a new name, with the newest name as the representative. */
+function renamedDayGroups(days) {
+  const names = [...days.keys()].sort((a, b) => (days.get(a)[0].d < days.get(b)[0].d ? -1 : 1))
+  const parent = new Map(names.map(n => [n, n]))
+  const find = n => (parent.get(n) === n ? n : find(parent.get(n)))
+  for (const older of names) {
+    const ws = days.get(older)
+    const last = ws[ws.length - 1]
+    for (const newer of names) {
+      if (newer === older) continue
+      const nws = days.get(newer)
+      const gap = gapDays(last.d, nws[0].d)
+      // gap 0 means the two were in use at the same time: two different days, never a rename.
+      if (!gap || gap > RENAME_GAP_DAYS) continue
+      if (jaccardOf(idsOf(last), idsOf(nws[0])) < RENAME_SAME) continue
+      const known = new Set(ws.flatMap(idsOf))
+      const first = idsOf(nws[0])
+      if (sharedOf(known, first) / first.length < RENAME_KNOWN) continue
+      const ra = find(older), rb = find(newer)
+      if (ra !== rb) parent.set(ra, rb)
+    }
+  }
+  const groups = new Map()
+  for (const n of names) {
+    const root = find(n)
+    const g = groups.get(root)
+    if (g) g.push(n)
+    else groups.set(root, [n])
+  }
+  return [...groups.values()].map(group => {
+    const representative = group.slice().sort((a, b) => (days.get(a).at(-1).d < days.get(b).at(-1).d ? 1 : -1))[0]
+    const workouts = group.flatMap(n => days.get(n)).sort((a, b) => (a.d < b.d ? -1 : 1))
+    return { name: representative, workouts }
+  })
+}
+
+/**
+ * The routines a Hevy history export implies. Shapes match what lib/import-apps.js returns for
+ * the apps that export routines (mergeImportedRoutines/freshRoutines in sheets.jsx).
+ */
+export function routinesFromHistory(parsed) {
+  const days = new Map()
+  for (const w of parsed.workouts || []) {
+    const name = String(w.name || '').trim()
+    if (!name) continue
+    if (!days.has(name)) days.set(name, [])
+    days.get(name).push(w)
+  }
+  for (const ws of days.values()) ws.sort((a, b) => (a.d < b.d ? -1 : 1))
+  const groups = renamedDayGroups(days)
+  const routines = []
+  for (const { name, workouts } of groups) {
+    if (workouts.length < ROUTINE_MIN_SESSIONS) continue
+    const session = mostTypicalSession(workouts)
+    const ex = session.entries.map(slotOf).filter(Boolean)
+    if (!ex.length) continue
+    routines.push({ importKey: 'hevycsv|' + zhKeyOf(name), name: name.slice(0, 80), emoji: 'figureStrength', ex, last: session.d })
+  }
+  // Newest plan first, the order the user would list their current split in.
+  routines.sort((a, b) => (a.last < b.last ? 1 : -1))
+  for (const r of routines) delete r.last
+  const used = new Set(routines.flatMap(r => r.ex.map(e => e.id)))
+  const matchedIds = [...used].filter(id => EXIDX[id])
+  return {
+    kind: 'routines', source: 'Hevy (from history)', routines,
+    customEx: [], matched: matchedIds.length, matchedIds, created: 0, unmatchedNames: [], scripted: 0,
+  }
+}
+
 /* ------------------------------------------------------------------ sniff -- */
 
 /**
@@ -610,7 +742,13 @@ export function parseImportFile(text, opts = {}) {
       return app(rows, opts)
     }
   }
-  return parseImport(s, opts)
+  const parsed = parseImport(s, opts)
+  // Hevy's CSV is a history export: the training days live in its workout titles. Read the
+  // plans off them too, before the summary, the way the apps with a routines section do.
+  if (parsed?.kind === 'workouts' && parsed.source === 'Hevy' && parsed.workouts?.length) {
+    parsed.routines = routinesFromHistory(parsed)
+  }
+  return parsed
 }
 
 function parseJson(s, opts) {
