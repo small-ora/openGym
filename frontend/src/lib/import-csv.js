@@ -30,6 +30,7 @@ import {
 } from './measurements.js'
 import { isWarmupRow, completedVolumeOf, syncSideAggregate } from './workout-model.js'
 import { HEVY_TITLE_MAP } from './hevy-id-map.js'
+import { matchHevyZhTitle } from './hevy-zh-titles.js'
 import { clampIncline, inclineFrom } from './incline.js'
 
 /* ----------------------------------------------------------------- CSV ---- */
@@ -417,6 +418,15 @@ export function matchHevyTitle(name) {
   return id && EXIDX[id] ? id : null
 }
 
+/**
+ * The same title match for a Hevy export written in Chinese (lib/hevy-zh-titles.js): Hevy
+ * localizes the exercise names to the app's language, so an English-only table left every
+ * Chinese title as a custom exercise.
+ */
+export function matchHevyAnyTitle(name) {
+  return matchHevyTitle(name) || matchHevyZhTitle(name)
+}
+
 // Hevy exports no category column, so every invented exercise fell through to the
 // 'upper legs' default and a third of an imported history was attributed to the legs in
 // the muscle map. When there is no category, read the body part off the name instead.
@@ -777,7 +787,7 @@ export function parseWorkoutRows(rows, map, source, { unit = 'kg', customEx = []
         // stays custom: it was not in the catalogue on purpose.
         const alt = map.matchName !== undefined ? cell(r, 'matchName') : ''
         const byName = () => (alt ? matchExercise(alt) || (isNoMatch(alt) ? null : matchExercise(name)) : matchExercise(name))
-        id = mine ? mine.id : fileId ? null : canonicalExId((source === 'Hevy' ? matchHevyTitle(name) : null) || byName())
+        id = mine ? mine.id : fileId ? null : canonicalExId((source === 'Hevy' ? matchHevyAnyTitle(name) : null) || byName())
       }
       resolved.set(exact, id)
     }

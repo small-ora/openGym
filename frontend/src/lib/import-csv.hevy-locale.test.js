@@ -87,9 +87,12 @@ describe('a Hevy export written in Chinese', () => {
     expect([new Date(push.start).getHours(), new Date(push.start).getMinutes()]).toEqual([20, 5])
   })
 
-  it('creates the Chinese exercise names as the user’s own exercises with their sets', () => {
+  it('matches the Chinese exercise names to the library and keeps their sets', () => {
     const [legs] = parsed.workouts
-    expect(parsed.customEx.map(c => c.n).sort()).toEqual(['卧推（哑铃）', '划船（哑铃）', '跑步机', '腿举（器械）'].sort())
+    // lib/hevy-zh-titles.js: 腿举（器械）is the leg press, 跑步机 the treadmill.
+    expect(legs.entries.map(e => e.id)).toEqual(['0739', '3666'])
+    expect(parsed.customEx).toEqual([])
+    expect(parsed.matched).toBe(4)
     expect(legs.entries.map(e => e.sets)).toEqual([
       [{ w: 70, r: 18, done: true }, { w: 70, r: 12, done: true }],
       [{ min: 36, speed: 4, done: true }],
