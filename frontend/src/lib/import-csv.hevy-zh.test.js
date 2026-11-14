@@ -14,7 +14,7 @@ describe('Hevy Chinese exercise titles', () => {
   it('reads the names a Chinese export writes, including the equipment in parentheses', () => {
     const cases = {
       '腿举（器械）': '0739', '腿举（机）': '0739', '哈克深蹲（机械）': '0743',
-      '髋关节内收（器械）': '0598', '高位下拉（绳索）': '2330', '阔背肌下拉（滑轮机）': '2330',
+      '髋关节内收（器械）': '0598', '高位下拉（绳索）': '0150', '阔背肌下拉（滑轮机）': '2330',
       '高位下拉 - 窄握（绳索）': '1047', '坐姿绳索划船 - V把（绳索）': '2661',
       '坐姿绳索划船 - 宽握': '0218', '肩推 （哑铃）': '0405',
       '传教士弯举（哑铃）': '0372', '锤式弯举 （哑铃）': '0313',
@@ -22,8 +22,8 @@ describe('Hevy Chinese exercise titles', () => {
       '卧推（史密斯机）': '0748', '卧推 （哑铃）': '0289',
       '下斜推胸 （训练机）': '1300', '二头弯举 （训练机）': '0575', '等侧划船 （训练机）': '0571',
       '绳索夹胸交叉': '1269', '平板支撑': '0463', '跑步机': '3666', '攀登': '2311',
-      '俯身划船  (杠铃）': '0027', '背部伸展 (Weighted Hyperextension)': '0573',
-      '负重背部伸展（罗马椅）': '0573', '胸推（器械）': '0577',
+      '俯身划船  (杠铃）': '0027', '背部伸展 (Weighted Hyperextension)': '5035',
+      '负重背部伸展（罗马椅）': '5035', '背部伸展': '1860', '山羊挺身': '1860', '面拉': '7744', '胸推（器械）': '0577',
       '上斜卧推（哑铃）': '0314', '下斜卧推（哑铃）': '0301',
       '单杠曲腿上举': '9819', '单车式卷腹': '6211', '悬垂举腿': '0472',
       '三头肌下压': '0241', '三头肌绳索下压': '0200', '单侧划船（器械）': '1235',
@@ -31,9 +31,15 @@ describe('Hevy Chinese exercise titles', () => {
     for (const [zh, id] of Object.entries(cases)) expect(matchHevyZhTitle(zh), zh).toBe(id)
   })
 
-  it('falls back to the base movement when the equipment is not in the table', () => {
-    expect(matchHevyZhTitle('腿举（弹力带）')).toBe('0739')
-    expect(matchHevyZhTitle('卧推（弹力带）')).toBe('0025')
+  it('does not guess an equipment the table does not know', () => {
+    // The generated English map refuses the same guess ("squat (machine)" is never the barbell
+    // squat): a custom exercise beats the wrong one.
+    expect(matchHevyZhTitle('腿举（弹力带）')).toBeNull()
+    expect(matchHevyZhTitle('卧推（弹力带）')).toBeNull()
+    expect(matchHevyZhTitle('深蹲（器械）')).toBeNull()
+    // A bare movement name still has its canonical entry.
+    expect(matchHevyZhTitle('腿举')).toBe('0739')
+    expect(matchHevyZhTitle('深蹲')).toBe('0043')
   })
 
   it('leaves names it does not know, and English titles, to the other matchers', () => {

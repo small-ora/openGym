@@ -27,11 +27,15 @@ export const HEVY_ZH_TITLE_MAP = {
   '俯身划船': '0027', '俯身划船(杠铃)': '0027',
   '单侧划船': '1235', '单侧划船(器械)': '1235',
   '等侧划船': '0571', '等侧划船(器械)': '0571',
-  '高位下拉': '2330', '高位下拉(绳索)': '2330', '阔背肌下拉': '2330', '阔背肌下拉(滑轮机)': '2330',
+  '高位下拉': '0150', '高位下拉(绳索)': '0150', '阔背肌下拉': '2330', '阔背肌下拉(滑轮机)': '2330',
   '高位下拉-窄握': '1047', '高位下拉-窄握(绳索)': '1047',
   '坐姿绳索划船': '0861', '坐姿绳索划船-v把': '2661', '坐姿绳索划船-v把(绳索)': '2661',
   '坐姿绳索划船-宽握': '0218', '坐姿绳索划船-宽握(绳索)': '0218',
-  '背部伸展': '0573', '负重背部伸展': '0573', '负重背部伸展(罗马椅)': '0573',
+  // The catalogue's own Chinese for 山羊挺身/负重山羊挺身 is 1860/5035, and the generated English
+  // table maps the same Hevy titles ("back extension (hyperextension)") there; 0573 is the
+  // machine back extension, which is a different station.
+  '背部伸展': '1860', '山羊挺身': '1860', '负重山羊挺身': '5035',
+  '负重背部伸展': '5035', '负重背部伸展(罗马椅)': '5035', '背部伸展(weightedhyperextension)': '5035',
   // 肩
   '肩推': '0405', '肩推(哑铃)': '0405',
   // 腹
@@ -56,7 +60,7 @@ export const HEVY_ZH_TITLE_MAP = {
   '腿弯举': '0586', '俯卧腿弯举': '0586', '坐姿腿弯举': '0599',
   '耸肩': '0095', '耸肩(哑铃)': '0406', '耸肩(杠铃)': '0095',
   '弯举': '0294', '弯举(哑铃)': '0294', '弯举(杠铃)': '0031', '弯举(绳索)': '0868',
-  '面拉': '0203', '俄罗斯转体': '0687', '山羊挺身': '0573',
+  '面拉': '7744', '面拉(绳索)': '7744', '俄罗斯转体': '0687',
   '划船(哑铃)': '0292', '划船(杠铃)': '0027', '划船(器械)': '1350', '划船(绳索)': '0180',
 }
 
@@ -73,9 +77,10 @@ export function zhTitleKey(name) {
 export function matchHevyZhTitle(name) {
   const key = zhTitleKey(name)
   if (!key) return null
-  // A name with equipment the table has no row for (a new "（弹力带）" say) still means the base
-  // movement: "腿举（弹力带）" is a leg press. Only the trailing parentheses are dropped.
-  const cut = key.lastIndexOf('(')
-  const id = HEVY_ZH_TITLE_MAP[key] || (cut > 0 ? HEVY_ZH_TITLE_MAP[key.slice(0, cut)] : null)
+  // A bare movement name ("腿举") has its canonical entry in the table. A name with equipment the
+  // table has no row for does not fall back to that base: "深蹲（弹力带）" is not the barbell
+  // squat, and the generated English map refuses exactly those guesses (a wrong exercise is worse
+  // than a custom one), so it stays the user's own exercise until the table knows the equipment.
+  const id = HEVY_ZH_TITLE_MAP[key]
   return id && Object.hasOwn(EXIDX, id) ? canonicalExId(id) : null
 }
