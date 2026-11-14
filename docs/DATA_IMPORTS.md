@@ -37,9 +37,15 @@ These exports work without any editing:
 | Fitbod | Log → ⋯ → **Export Data** (`WorkoutExport.csv`) |
 | JEFIT | jefit.com → Settings → Data Controls → **Export Data** |
 
-Hevy writes the date in the language the app is set to. openGym reads the month names it knows
-from those languages and Chinese dates such as `30 10月 2026, 09:52`, so a Chinese-language
-export imports without editing.
+Hevy writes the date, and the exercise names, in the language the app is set to. openGym reads
+the month names it knows from those languages and Chinese dates such as `30 10月 2026, 09:52`,
+and matches Hevy's Chinese exercise names (腿举, 高位下拉, 蝴蝶机夹胸 …) to its library, so a
+Chinese-language export imports without editing.
+
+Hevy's CSV also brings your training days: every workout title that repeats becomes a routine
+(the exercises of that day, in order, with the sets, reps and load its most typical session
+used), named as Hevy named it. A title that stopped when a near-identical one started is read as
+a rename, so a day you renamed in Hevy stays one routine, under the newer name.
 
 Other files work too, as long as they have a date, an exercise name and something measured
 (weight and reps, a time or a distance). See [your own CSV](#your-own-csv) below.
