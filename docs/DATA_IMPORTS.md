@@ -38,8 +38,8 @@ These exports work without any editing:
 | JEFIT | jefit.com → Settings → Data Controls → **Export Data** |
 
 Hevy writes the date in the language the app is set to. openGym reads the month names it knows
-from those languages, and the two Chinese date shapes Hevy writes (`30 10月 2026, 09:52` and
-`2026年10月30日 09:52`), so a Chinese-language export imports without editing.
+from those languages and Chinese dates such as `30 10月 2026, 09:52`, so a Chinese-language
+export imports without editing.
 
 Other files work too, as long as they have a date, an exercise name and something measured
 (weight and reps, a time or a distance). See [your own CSV](#your-own-csv) below.
