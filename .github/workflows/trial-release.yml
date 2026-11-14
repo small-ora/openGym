@@ -1,0 +1,222 @@
+# Trial build for the fork — lives only on the `ci/trial` branch, never part of the change that
+# goes upstream.
+#
+# Pushing to `ci/trial` (or running this by hand) builds the branch `feat/hevy-csv-zh-dates` into
+# two downloadable artefacts and publishes them on a prerelease tagged after the built commit:
+#
+#   OpenGymTest-<sha>.apk     Android sideload *debug* build. Debug builds carry the `.test`
+#                             application id and the "OpenGymTest" label, so it installs next to
+#                             the real app and never touches its data. 180 px animations, the
+#                             same size the Standard APK ships.
+#   opengym-demo-<sha>.zip    The browser demo (`VITE_DEMO=1`): static files, guest mode, no
+#                             backend. Unzip, serve the folder, import the CSV.
+#
+# What it is for: the HEVY CSV import fix (Chinese-language Hevy exports). Not an upstream
+# release, no signing key, debug-only.
+name: Trial build (fork)
+
+on:
+  push:
+    branches: [ci/trial]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # One run per branch; a newer push makes the older build pointless.
+  group: trial-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+  FORCE_COLOR: '1'
+  # The branch under test. Kept here so a re-run always builds the same thing.
+  TRIAL_REF: feat/hevy-csv-zh-dates
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/hevy-csv-zh-dates
+          persist-credentials: false
+      - id: src
+        run: echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - name: Phone bundle + cap sync
+        run: npm run build:mobile
+        working-directory: frontend
+      - name: Sideload debug APK
+        working-directory: frontend/android
+        run: ./gradlew --no-daemon assembleSideloadDebug
+      - name: Collect the APK
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          apk=$(ls frontend/android/app/build/outputs/apk/sideload/debug/*.apk | head -1)
+          cp "$apk" "out/OpenGymTest-${{ steps.src.outputs.sha }}.apk"
+          ( cd out && sha256sum ./*.apk > SHA256SUMS-apk.txt )
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*
+          if-no-files-found: error
+
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/hevy-csv-zh-dates
+          persist-credentials: false
+      - id: src
+        run: echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - name: Demo build (static, guest mode)
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_DEMO: '1'
+      # The 180 px stills and animations, served next to the build.
+      - run: node scripts/catalogue/stage-media.mjs frontend/dist
+      - name: Zip the demo
+        run: |
+          set -euo pipefail
+          name="opengym-demo-${{ steps.src.outputs.sha }}.zip"
+          ( cd frontend/dist && zip -qr "../../$name" . )
+          sha256sum "$name" > SHA256SUMS-demo.txt
+          ls -l "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo
+          path: |
+            opengym-demo-*.zip
+            SHA256SUMS-demo.txt
+          if-no-files-found: error
+
+  release:
+    needs: [android, demo]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+          merge-multiple: true
+      - name: Publish the trial prerelease
+        run: |
+          set -euo pipefail
+          SRC=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TRIAL_REF}" --jq .sha)
+          SHA="${SRC::7}"
+          TAG="trial-${SHA}"
+          APK="dl/OpenGymTest-${SHA}.apk"
+          DEMO="dl/opengym-demo-${SHA}.zip"
+          [ -f "$APK" ] || { echo "missing $APK"; ls -l dl; exit 1; }
+          [ -f "$DEMO" ] || { echo "missing $DEMO"; ls -l dl; exit 1; }
+          echo "APK: $(du -h "$APK" | cut -f1)  DEMO: $(du -h "$DEMO" | cut -f1)"
+          cat > NOTES.md <<'EOF'
+          # HEVY CSV 导入 — 试用构建（fork，非上游正式版）
+
+          这是 **HEVY CSV（中文界面导出）导入修复** 的试用构建，来自本 fork 的分支
+          `feat/hevy-csv-zh-dates`，用来在本地验证导入是否正常；确认没问题后才会向上游
+          [DuarteSantos8/openGym](https://github.com/DuarteSantos8/openGym) 提 PR。
+
+          ## 产物
+
+          | 文件 | 是什么 | 怎么用 |
+          |---|---|---|
+          | `OpenGymTest-*.apk` | Android **debug** 包（应用 id 带 `.test`、名称 `OpenGymTest`，180 px 动作图）。**和正式版并存，不碰正式版数据** | 传到手机 → 允许安装未知来源 → 安装 → 打开 |
+          | `opengym-demo-*.zip` | 浏览器静态 demo（`VITE_DEMO=1`，游客模式、无后端） | 解压 → `python3 -m http.server 8080` → 浏览器打开 `http://localhost:8080` |
+
+          两个产物来自同一个 commit，SHA256 见 `SHA256SUMS-*.txt`。
+
+          ## 怎么试 HEVY 导入
+
+          1. 打开 app（APK 或 demo 都可以）→ **设置 → 数据与备份 → 从其他 App 导入**。
+          2. 选你从 HEVY 导出的 `workout_data.csv`（中文界面、日期形如 `30 10月 2026, 09:52`）。
+          3. 导入前看一眼摘要，预期：**60 次训练 / 1159 组 / 3 个训练计划**，日期
+             2026-07-14 → 2026-10-30，**0 行跳过**；中文动作名**匹配到动作库**（34 个动作），
+             只有 `船式摇摆` 一个没有对应动作库条目、会变成"你自己的动作"。
+          4. 确认导入后：计划页/Plan 里应出现 **3 个训练计划**（胸+三头 6 个动作、肩和腿 5 个、
+             背+二头 5 个），每个都带动作、组数、次数和重量；历史里抽查几次训练：
+             开始时间/时长、重量×次数、跑步机距离、平板支撑时长、组备注是否都在。
+             同一天已有训练的日子会被保留原样（这是 openGym 的既有行为），所以建议用干净的 app
+             或 demo 试。
+
+          ## 自托管（Docker）试用
+
+          不想用 APK/demo 的话，直接从分支构建：
+
+          ```sh
+          git clone -b feat/hevy-csv-zh-dates https://github.com/small-ora/openGym.git
+          cd openGym && cp .env.example .env && docker compose up -d --build
+          ```
+
+          然后打开 `http://localhost:8080`（`.env` 里的 `WEB_PORT`）按上面的步骤导入。
+          导入前先 **Export backup**。
+
+          ## 这次修了什么
+
+          - Hevy 的 CSV 日期跟随 App 语言：中文界面写 `30 10月 2026, 09:52`（还有 `2026年10月30日`
+            与 zh-TW 的 上午/下午 形态）。之前解析器只认 ISO/数字/英法等文字的月份，于是 1159 行
+            全部在日期闸门被丢掉，界面提示 "Nothing to import from that file"。
+          - 纯中文动作名在英文词袋里会变成空键，导致所有中文动作塌缩成同一个自定义动作，已修。
+          - 中文动作名（腿举、高位下拉、蝴蝶机夹胸 …）现在按一张从真实导出整理的表匹配到动作库，
+            括号里的器械词会归一化（器械/机械/训练机 → 同一个），表里没有的名字仍变成你自己的动作。
+          - Hevy 的 CSV 没有"训练计划"这一节：它是历史导出。现在把**重复出现的训练标题**读成计划
+            （每个标题取它最典型的一次训练：动作顺序、组数、次数、重量），并且把"旧名字停用、
+            新名字接上且动作几乎一样"识别成改名 —— 你改过名的训练日仍是一个计划（用新名字），
+            不是两个。
+
+          ## 已知限制（本次不做）
+
+          - 中文动作名表是人工整理的（103 条，覆盖真实导出 + 常用词）：表里没有的中文名仍是
+            自定义动作；`船式摇摆` 暂时没有对应动作库条目，会以自定义动作导入。
+          - zh-TW（繁体）动作名未覆盖（没有真实 zh-TW 导出样本）；繁体导出仍可导入，只是动作名
+            可能落到自定义动作。
+          - 英文 12 小时制 AM/PM 日期仍未支持（上游 issue #1121）。
+          - 夹带拉丁字母的中文动作名（如 `T杠划船`）仍可能被英文词袋误配，已记为后续加固项。
+
+          ## 构建信息
+
+          - 分支：`feat/hevy-csv-zh-dates`，commit：`COMMIT_PLACEHOLDER`
+          - 工作流：`.github/workflows/trial-release.yml`（只在本 fork 的 `ci/trial` 分支上）
+          - 许可：上游为 AGPL-3.0；本构建仅为试用，不随附签名密钥
+
+          > 这是 fork 上的试用版，不是上游发布；正式版请以上游仓库为准。
+          EOF
+          sed -i "s/COMMIT_PLACEHOLDER/${SRC}/" NOTES.md
+          # A rerun on the same commit replaces the earlier prerelease and its tag.
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SRC" \
+            --prerelease \
+            --title "HEVY CSV import trial (${SHA})" \
+            --notes-file NOTES.md \
+            "$APK" "$DEMO" dl/SHA256SUMS-*.txt
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets \
+            --jq '{url, assets: [.assets[].name]}'
